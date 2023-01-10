@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(pointcloud_image_converter)
 
-set(CMAKE_MACOSX_RPATH 0)
-add_definitions(-std=c++11)
+set(CMAKE_BUILD_TYPE "Release")
+# explicitly set std=c++14 to remove errors from pcl library
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "-O3")
 
 find_package(catkin_simple REQUIRED)
 catkin_simple(ALL_DEPS_REQUIRED)
