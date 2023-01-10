@@ -228,6 +228,7 @@ void PointCloudToImage::PointCloudCallback(
   lidar_info_msg_ptr->header.stamp = stamp;
   lidar_info_msg_ptr->height = lidar_intrinsics_.num_elevation_divisions_;
   lidar_info_msg_ptr->width = lidar_intrinsics_.num_azimuth_divisions_;
+  lidar_info_msg_ptr->distortion_model = std::string("lidar_ouster");
   // TODO: Dirty code, using D to store lidar intrinsic
   lidar_info_msg_ptr->D = {
       static_cast<float>(lidar_intrinsics_.num_azimuth_divisions_),
@@ -251,7 +252,7 @@ void PointCloudToImage::PointCloudCallback(
   height_img_msg_ptr->header.stamp = stamp;
   height_pub_.publish(height_img_msg_ptr, lidar_info_msg_ptr);
 
-  // output time
+  // output time: 3-5ms
   std::cout << "PointCloud to Image costs: " << tt.toc() << "ms" << std::endl;
 }
 }  // namespace pc_img_conv
