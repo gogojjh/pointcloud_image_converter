@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
   ros::NodeHandle nh;
   ros::NodeHandle nh_private("~");
 
-  pc_img_conv::PointCloudToImage pointcloud_to_image(nh, nh_private);
+  pc_img_conv::PointCloudToImage pointcloud_to_image(nh);
   ros::spin();
 
   return 0;

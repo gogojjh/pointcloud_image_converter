@@ -1,11 +1,12 @@
-pc2img_scale_factor: 1000.0
-pc2img_scale_offset: 10.0
-scan_min_range: 1.0
-scan_max_range: 200.0
-dataset_type: FusionPortable
-num_elevation_divisions: 128
-num_azimuth_divisions: 512
-start_elevation_rad: 65.0
-end_elevation_rad: 115.0
-start_azimuth_rad: 0.0
-end_azimuth_rad: 6.2831853
+pc2img:
+  pc2img_scale_factor: 1000.0
+  pc2img_scale_offset: 10.0
+  scan_min_range: 1.0
+  scan_max_range: 200.0
+  dataset_type: FusionPortable
+  num_elevation_divisions: 128
+  num_azimuth_divisions: 512
+  start_elevation_rad: 65.0
+  end_elevation_rad: 115.0
+  start_azimuth_rad: 0.0
+  end_azimuth_rad: 6.2831853

@@ -10,9 +10,7 @@
 // #define DEBUG
 
 namespace pc_img_conv {
-PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh,
-                                     ros::NodeHandle &nh_private)
-    : nh_(nh), nh_private_(nh_private) {
+PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
   pointcloud_sub_ = nh_.subscribe("input_cloud", 1,
                                   &PointCloudToImage::PointCloudCallback, this);
   it_ptr_.reset(new image_transport::ImageTransport(nh_));
@@ -22,33 +20,32 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh,
   // Parameters:
   // assume that all points are higher than -10.0m
   // points at height within [-10m, 55m] can be stored
-  PC2IMG_SCALE_FACTOR =
-      get_ros_param(nh_private, "pc2img_scale_factor", 1000.0f);
-  PC2IMG_SCALE_OFFSET = get_ros_param(nh_private, "pc2img_scale_offset", 10.0f);
+  PC2IMG_SCALE_FACTOR = get_ros_param(nh, "pc2img_scale_factor", 1000.0f);
+  PC2IMG_SCALE_OFFSET = get_ros_param(nh, "pc2img_scale_offset", 10.0f);
 
-  SCAN_MIN_RANGE = get_ros_param(nh_private, "scan_min_range", 1.0f);
-  SCAN_MAX_RANGE = get_ros_param(nh_private, "scan_max_range", 200.0f);
+  SCAN_MIN_RANGE = get_ros_param(nh, "scan_min_range", 1.0f);
+  SCAN_MAX_RANGE = get_ros_param(nh, "scan_max_range", 200.0f);
 
   DATASET_TYPE =
-      get_ros_param(nh_private, "dataset_type", std::string("FusionPortable"));
+      get_ros_param(nh, "dataset_type", std::string("FusionPortable"));
 
   // Parameters: lidar intrinsics
   lidar_intrinsics_.num_elevation_divisions_ =
-      get_ros_param(nh_private, "num_elevation_divisions", 128);
+      get_ros_param(nh, "num_elevation_divisions", 128);
   lidar_intrinsics_.num_azimuth_divisions_ =
-      get_ros_param(nh_private, "num_azimuth_divisions", 2048);
+      get_ros_param(nh, "num_azimuth_divisions", 2048);
 
   lidar_intrinsics_.start_elevation_rad_ =
-      get_ros_param(nh_private, "start_elevation_rad", 65.0f);
+      get_ros_param(nh, "start_elevation_rad", 65.0f);
   lidar_intrinsics_.end_elevation_rad_ =
-      get_ros_param(nh_private, "end_elevation_rad", 115.0f);
+      get_ros_param(nh, "end_elevation_rad", 115.0f);
   lidar_intrinsics_.vertical_fov_ = lidar_intrinsics_.end_elevation_rad_ -
                                     lidar_intrinsics_.start_elevation_rad_;
 
   lidar_intrinsics_.start_azimuth_rad_ =
-      get_ros_param(nh_private, "start_azimuth_rad", 0.0f);
+      get_ros_param(nh, "start_azimuth_rad", 0.0f);
   lidar_intrinsics_.end_azimuth_rad_ =
-      get_ros_param(nh_private, "end_azimuth_rad", 2 * M_PI);
+      get_ros_param(nh, "end_azimuth_rad", 2 * M_PI);
   lidar_intrinsics_.horizontal_fov_ =
       lidar_intrinsics_.end_azimuth_rad_ - lidar_intrinsics_.start_azimuth_rad_;
 }

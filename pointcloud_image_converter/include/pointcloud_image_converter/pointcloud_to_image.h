@@ -50,7 +50,7 @@ struct LidarIntrinsics {
 
 class PointCloudToImage {
  public:
-  PointCloudToImage(ros::NodeHandle &nh, ros::NodeHandle &nh_private);
+  PointCloudToImage(ros::NodeHandle &nh);
 
   void PointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr &msg);
 
