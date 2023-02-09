@@ -15,12 +15,15 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "pointcloud_image_converter/pcl/point_xyzirrat.hpp"
+#include "pointcloud_image_converter/ouster_point.hpp"
 
 namespace pc_img_conv {
 
-// NOTE(gogojjh): ouster lidar
-typedef pcl::PointXYZIRRAT PointType;
+// NOTE(gogojjh): ouster lidar (raw)
+typedef ouster_ros::Point PointType;
+
+// NOTE(gogojjh): ouster lidar (refined)
+// typedef pcl::PointXYZIRRAT PointType;
 
 // NOTE(gogojjh): common lidar
 // typedef pcl::PointXYZI PointType;

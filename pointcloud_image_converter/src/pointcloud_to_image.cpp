@@ -143,8 +143,11 @@ void PointCloudToImage::Pointcloud2DepthImage(
       col_id -= intr.num_azimuth_divisions_;
 
     float dep = r * PC2IMG_SCALE_FACTOR;
+    // the largest depth <= 2^16/1e3 = 65.536
     if (dep > std::numeric_limits<uint16_t>::max()) {
+#if DEBUG
       std::cout << "depth value is too large: " << dep << std::endl;
+#endif
       continue;
     }
     if (dep < 0.0f) continue;
@@ -209,7 +212,7 @@ void PointCloudToImage::PointCloudCallback(
                     cv::Scalar(0));
   Pointcloud2DepthImage(cloud_filter_ptr, lidar_intrinsics_, depth_img);
 #ifdef DEBUG
-  // cv::imwrite("/tmp/depth_image.png", depth_img);
+  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
 #endif
 
   cv::Mat height_img(lidar_intrinsics_.num_elevation_divisions_,
@@ -217,7 +220,7 @@ void PointCloudToImage::PointCloudCallback(
                      cv::Scalar(0));
   Pointcloud2HeightImage(cloud_filter_ptr, lidar_intrinsics_, height_img);
 #ifdef DEBUG
-  cv::imwrite("/tmp/height_image.png", height_img);
+  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
 #endif
 
   // ******************* Publish ROS message

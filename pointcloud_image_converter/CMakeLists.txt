@@ -22,13 +22,21 @@ cs_add_library(${PROJECT_NAME}
   src/pointcloud_to_image.cpp
 )
 
-############
-# BINARIES #
-############
+##############
+# EXECUTABLE #
+##############
 cs_add_executable(pc2img_node
   src/pc2img_node.cpp
 )
 target_link_libraries(pc2img_node ${PROJECT_NAME} ${OpenCV_LIBRARIES})
+
+########
+# TEST #
+########
+cs_add_executable(test_publish_image
+  test/test_publish_image.cpp
+)
+target_link_libraries(test_publish_image ${PROJECT_NAME} ${OpenCV_LIBRARIES})
 
 ##########
 # EXPORT #
