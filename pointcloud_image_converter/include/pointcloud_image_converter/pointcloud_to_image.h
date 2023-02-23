@@ -16,19 +16,15 @@
 #include <opencv2/opencv.hpp>
 
 #include "pointcloud_image_converter/ouster_point.hpp"
+#include "pointcloud_image_converter/point_xyzirgbl.hpp"
 
 namespace pc_img_conv {
 
-// NOTE(gogojjh): ouster lidar (raw)
 typedef ouster_ros::Point PointType;
 
-// NOTE(gogojjh): ouster lidar (refined)
-// typedef pcl::PointXYZIRRAT PointType;
-
-// NOTE(gogojjh): common lidar
-// typedef pcl::PointXYZI PointType;
-
 struct LidarIntrinsics {
+  std::string distortion_model_;
+
   int num_elevation_divisions_;
   int num_azimuth_divisions_;
 
@@ -44,6 +40,7 @@ struct LidarIntrinsics {
   float rads_per_pixel_azimuth_;
 
   void PrintIntrinsics() const {
+    std::cout << distortion_model_ << " ";
     std::cout << num_azimuth_divisions_ << " " << num_elevation_divisions_
               << " " << horizontal_fov_ << " " << vertical_fov_ << " "
               << start_azimuth_rad_ << " " << end_azimuth_rad_ << " "
@@ -62,10 +59,14 @@ class PointCloudToImage {
                               LidarIntrinsics &intr);
 
   void Pointcloud2DepthImage(const pcl::PointCloud<PointType>::Ptr &cloud_ptr,
-                             const LidarIntrinsics &intr, cv::Mat &depth_img);
+                             const LidarIntrinsics &intr, cv::Mat &img);
 
   void Pointcloud2HeightImage(const pcl::PointCloud<PointType>::Ptr &cloud_ptr,
-                              const LidarIntrinsics &intr, cv::Mat &height_img);
+                              const LidarIntrinsics &intr, cv::Mat &img);
+
+  void Pointcloud2SemanticImage(
+      const pcl::PointCloud<PointType>::Ptr &cloud_ptr,
+      const LidarIntrinsics &intr, cv::Mat &img);
 
  private:
   ros::NodeHandle nh_;
@@ -77,6 +78,7 @@ class PointCloudToImage {
   // ROS Publisher
   image_transport::CameraPublisher depth_pub_;
   image_transport::CameraPublisher height_pub_;
+  image_transport::CameraPublisher semantic_pub_;
   std::shared_ptr<image_transport::ImageTransport> it_ptr_;
 
   // Parameters

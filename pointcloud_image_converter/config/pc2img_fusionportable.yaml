@@ -4,6 +4,7 @@ pc2img:
   scan_min_range: 1.0
   scan_max_range: 200.0
   dataset_type: FusionPortable
+  distortion_model: lidar_ouster
   num_elevation_divisions: 128
   num_azimuth_divisions: 512
   start_elevation_rad: 65.0
