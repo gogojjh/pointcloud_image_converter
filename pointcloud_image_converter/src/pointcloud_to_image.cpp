@@ -233,6 +233,16 @@ void PointCloudToImage::PointCloudCallback(
       pt.reflectivity = tmp_cloud.points[i].label;
       cloud_ptr->points.push_back(pt);
     }
+  } else if (DATASET_TYPE.find("KITTI360") != std::string::npos) {
+    pcl::PointCloud<pcl::PointXYZ> tmp_cloud;
+    pcl::fromROSMsg(*msg, tmp_cloud);
+    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
+      PointType pt;
+      pt.x = tmp_cloud.points[i].x;
+      pt.y = tmp_cloud.points[i].y;
+      pt.z = tmp_cloud.points[i].z;
+      cloud_ptr->points.push_back(pt);
+    }
   } else if (DATASET_TYPE.find("KITTI") != std::string::npos) {
     pcl::PointCloud<pcl::PointXYZI> tmp_cloud;
     pcl::fromROSMsg(*msg, tmp_cloud);
@@ -279,8 +289,8 @@ void PointCloudToImage::PointCloudCallback(
   cv::Mat semantic_img(lidar_intrinsics_.num_elevation_divisions_,
                        lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
                        cv::Scalar(0));
-  if ((!DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
-      (!DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
     Pointcloud2SemanticImage(cloud_filter_ptr, lidar_intrinsics_, semantic_img);
 #ifdef DEBUG
     cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
@@ -294,7 +304,6 @@ void PointCloudToImage::PointCloudCallback(
   lidar_info_msg_ptr->height = lidar_intrinsics_.num_elevation_divisions_;
   lidar_info_msg_ptr->width = lidar_intrinsics_.num_azimuth_divisions_;
   lidar_info_msg_ptr->distortion_model = lidar_intrinsics_.distortion_model_;
-  // TODO: Dirty code, using D to store lidar intrinsic
   lidar_info_msg_ptr->D = {
       static_cast<float>(lidar_intrinsics_.num_azimuth_divisions_),
       static_cast<float>(lidar_intrinsics_.num_elevation_divisions_),
