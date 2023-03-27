@@ -286,11 +286,12 @@ void PointCloudToImage::PointCloudCallback(
   cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
 #endif
 
-  cv::Mat semantic_img(lidar_intrinsics_.num_elevation_divisions_,
-                       lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
-                       cv::Scalar(0));
+  cv::Mat semantic_img;
   if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
       (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+    semantic_img = cv::Mat(lidar_intrinsics_.num_elevation_divisions_,
+                           lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
+                           cv::Scalar(0));
     Pointcloud2SemanticImage(cloud_filter_ptr, lidar_intrinsics_, semantic_img);
 #ifdef DEBUG
     cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
@@ -326,8 +327,8 @@ void PointCloudToImage::PointCloudCallback(
   height_img_msg_ptr->header.stamp = stamp;
   height_pub_.publish(height_img_msg_ptr, lidar_info_msg_ptr);
 
-  if ((!DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
-      (!DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
     sensor_msgs::ImagePtr semantic_img_msg_ptr =
         cv_bridge::CvImage(std_msgs::Header(), "mono16", semantic_img)
             .toImageMsg();

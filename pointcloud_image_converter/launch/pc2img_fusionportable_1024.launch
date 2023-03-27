@@ -1,7 +1,7 @@
 <launch>
 
 	<rosparam command="load" 
-		file="$(find pointcloud_image_converter)/config/pc2img_fusionportable.yaml" />
+		file="$(find pointcloud_image_converter)/config/pc2img_fusionportable_1024.yaml" />
 
 	<node pkg="pointcloud_image_converter" name="pc2img_node" type="pc2img_node" 
 		ns="pc2img" clear_params="true" required="true">
