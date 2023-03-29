@@ -13,3 +13,5 @@ catkin build pointcloud_image_converter
 ## 2. Usage 
 ```roslaunch pointcloud_image_converter pc2img_fusionportable.launch```
 
+## 3. Parameters
+* ```dataset_type: FusionPortable, SemanticFusionPortable, KITTI, KITTI360, SemanticKITTI, SemanticUSL```

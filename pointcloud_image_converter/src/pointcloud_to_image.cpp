@@ -8,16 +8,10 @@
 #include "pointcloud_image_converter/ros_params_helper.h"
 
 // #define DEBUG
+// #define DEBUG_ALIGNMENT
 
 namespace pc_img_conv {
 PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
-  pointcloud_sub_ = nh_.subscribe("input_cloud", 1,
-                                  &PointCloudToImage::PointCloudCallback, this);
-  it_ptr_.reset(new image_transport::ImageTransport(nh_));
-  depth_pub_ = it_ptr_->advertiseCamera("depth_image", 1);
-  height_pub_ = it_ptr_->advertiseCamera("height_image", 1);
-  semantic_pub_ = it_ptr_->advertiseCamera("semantic_image", 1);
-
   // Parameters:
   // assume that all points are higher than -10.0m
   // points at height within [-10m, 55m] can be stored
@@ -29,6 +23,9 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
 
   DATASET_TYPE =
       get_ros_param(nh, "dataset_type", std::string("FusionPortable"));
+
+  MIN_T_DATA = get_ros_param(nh, "min_t_data", 0.1);
+  CLOUD_BUFF = get_ros_param(nh, "cloud_buff", 50);
 
   // Parameters: lidar intrinsics
   lidar_intrinsics_.distortion_model_ =
@@ -52,8 +49,173 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
       get_ros_param(nh, "end_azimuth_rad", 2 * M_PI);
   lidar_intrinsics_.horizontal_fov_ =
       lidar_intrinsics_.end_azimuth_rad_ - lidar_intrinsics_.start_azimuth_rad_;
+
+  // ROS subscriber and publisher
+  pointcloud_sub_ = nh_.subscribe("input_cloud", 1,
+                                  &PointCloudToImage::PointCloudCallback, this);
+  it_ptr_.reset(new image_transport::ImageTransport(nh_));
+  depth_pub_ = it_ptr_->advertiseCamera("depth_image", 1);
+  height_pub_ = it_ptr_->advertiseCamera("height_image", 1);
+  semantic_pub_ = it_ptr_->advertiseCamera("semantic_image", 1);
+
+  if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
+    image_sub_ = nh_.subscribe("input_camera_semantic_image", 1,
+                               &PointCloudToImage::ImageCallback, this);
+    camera_info_sub_ = nh_.subscribe(
+        "camera_info", 1, &PointCloudToImage::CameraInfoCallback, this);
+  }
+  K_.setIdentity();
 }
 
+void PointCloudToImage::PointCloudCallback(
+    const sensor_msgs::PointCloud2::ConstPtr &msg) {
+  TicToc tt;
+
+  pcl::PointCloud<PointType>::Ptr cloud_ptr;
+  cloud_ptr.reset(new pcl::PointCloud<PointType>());
+  if ((DATASET_TYPE.find("FusionPortable") != std::string::npos) ||
+      (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos)) {
+    pcl::fromROSMsg(*msg, *cloud_ptr);
+  } else if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+             (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+    pcl::PointCloud<pcl::PointXYZIRGBL> tmp_cloud;
+    pcl::fromROSMsg(*msg, tmp_cloud);
+    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
+      PointType pt;
+      pt.x = tmp_cloud.points[i].x;
+      pt.y = tmp_cloud.points[i].y;
+      pt.z = tmp_cloud.points[i].z;
+      // NOTE(gogojjh): the intensity information is not necessary
+      // pt.intensity = tmp_cloud.points[i].intensity;
+      pt.reflectivity = tmp_cloud.points[i].label;
+      cloud_ptr->points.push_back(pt);
+    }
+  } else if (DATASET_TYPE.find("KITTI360") != std::string::npos) {
+    pcl::PointCloud<pcl::PointXYZ> tmp_cloud;
+    pcl::fromROSMsg(*msg, tmp_cloud);
+    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
+      PointType pt;
+      pt.x = tmp_cloud.points[i].x;
+      pt.y = tmp_cloud.points[i].y;
+      pt.z = tmp_cloud.points[i].z;
+      cloud_ptr->points.push_back(pt);
+    }
+  } else if (DATASET_TYPE.find("KITTI") != std::string::npos) {
+    pcl::PointCloud<pcl::PointXYZI> tmp_cloud;
+    pcl::fromROSMsg(*msg, tmp_cloud);
+    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
+      PointType pt;
+      pt.x = tmp_cloud.points[i].x;
+      pt.y = tmp_cloud.points[i].y;
+      pt.z = tmp_cloud.points[i].z;
+      // pt.intensity = tmp_cloud.points[i].intensity;
+      cloud_ptr->points.push_back(pt);
+    }
+  }
+#ifdef DEBUG
+  std::cout << "Pointcloud received: got " << cloud_ptr->size() << " points"
+            << std::endl;
+#endif
+
+  // NOTE(gogojjh): functions to convert pointcloud into image
+  pcl::PointCloud<PointType>::Ptr cloud_filter_ptr;
+  cloud_filter_ptr.reset(new pcl::PointCloud<PointType>());
+  if (!computeLidarIntrinsics(cloud_ptr, cloud_filter_ptr, lidar_intrinsics_))
+    return;
+#ifdef DEBUG
+  std::cout << "Raw cloud size: " << cloud_ptr->size() << std::endl;
+  std::cout << "Filter cloud size: " << cloud_filter_ptr->size() << std::endl;
+#endif
+
+  cv::Mat depth_img(lidar_intrinsics_.num_elevation_divisions_,
+                    lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
+                    cv::Scalar(0));
+  Pointcloud2DepthImage(cloud_filter_ptr, lidar_intrinsics_, depth_img);
+#ifdef DEBUG
+  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
+#endif
+
+  cv::Mat height_img(lidar_intrinsics_.num_elevation_divisions_,
+                     lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
+                     cv::Scalar(0));
+  Pointcloud2HeightImage(cloud_filter_ptr, lidar_intrinsics_, height_img);
+#ifdef DEBUG
+  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
+#endif
+
+  cv::Mat semantic_img;
+  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+    semantic_img = cv::Mat(lidar_intrinsics_.num_elevation_divisions_,
+                           lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
+                           cv::Scalar(0));
+    Pointcloud2SemanticImage(cloud_filter_ptr, lidar_intrinsics_, semantic_img);
+#ifdef DEBUG
+    cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
+#endif
+  }
+
+  // ******************* Publish ROS message
+  sensor_msgs::CameraInfoPtr lidar_info_msg_ptr(new sensor_msgs::CameraInfo());
+  lidar_info_msg_ptr->header = msg->header;
+  lidar_intrinsics_.ConvertToMsg(lidar_info_msg_ptr);
+
+  sensor_msgs::ImagePtr depth_img_msg_ptr =
+      cv_bridge::CvImage(msg->header, "mono16", depth_img).toImageMsg();
+  depth_pub_.publish(depth_img_msg_ptr, lidar_info_msg_ptr);
+
+  sensor_msgs::ImagePtr height_img_msg_ptr =
+      cv_bridge::CvImage(msg->header, "mono16", height_img).toImageMsg();
+  height_pub_.publish(height_img_msg_ptr, lidar_info_msg_ptr);
+
+  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+    sensor_msgs::ImagePtr semantic_img_msg_ptr =
+        cv_bridge::CvImage(msg->header, "mono16", semantic_img).toImageMsg();
+    semantic_pub_.publish(semantic_img_msg_ptr, lidar_info_msg_ptr);
+  }
+
+  // output time: 3-10ms
+  std::cout << "PointCloud to Image costs: " << tt.toc() << "ms" << std::endl;
+
+  // NOTE(gogojjh): Only work for SemanticFusionPortable data
+  if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
+    mutex_cloud_.lock();
+    cloud_queue_.push(
+        std::make_tuple(msg->header, cloud_ptr, lidar_intrinsics_));
+    while (!cloud_queue_.empty() && cloud_queue_.size() > CLOUD_BUFF) {
+      cloud_queue_.pop();
+    }
+    mutex_cloud_.unlock();
+  }
+}
+
+// clang-format off
+// NOTE(gogojjh): Only work for SemanticFusionPortable data
+void PointCloudToImage::ImageCallback(const sensor_msgs::ImageConstPtr &msg) {
+  if (K_(0, 0) == 1.0f || K_(1, 1) == 1.0f) return;
+  // output time: 3-10ms
+  TicToc tt;
+  ProcessPointCloudImageAlignment(msg);
+  std::cout << "PointCloud to Image Alignment costs: " << tt.toc() << "ms" << std::endl;
+}
+// clang-format on
+
+// clang-format off
+// NOTE(gogojjh): Only work for SemanticFusionPortable data
+void PointCloudToImage::CameraInfoCallback(
+    const sensor_msgs::CameraInfoConstPtr &msg) {
+  if (K_(0, 0) == 1.0f || K_(1, 1) == 1.0f) {
+    K_ << msg->K[0], msg->K[1], msg->K[2], 
+          msg->K[3], msg->K[4], msg->K[5], 
+          msg->K[6], msg->K[7], msg->K[8];
+  }
+}
+// clang-format on
+
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
 bool PointCloudToImage::computeLidarIntrinsics(
     const pcl::PointCloud<PointType>::Ptr &cloud_ptr,
     pcl::PointCloud<PointType>::Ptr &cloud_filter, LidarIntrinsics &intr) {
@@ -134,7 +296,7 @@ bool PointCloudToImage::computeLidarIntrinsics(
         intr.horizontal_fov_ / (intr.num_azimuth_divisions_ - 1);
     intr.vertical_fov_ = intr.end_elevation_rad_ - intr.start_elevation_rad_;
   }
-  intr.PrintIntrinsics();
+  // intr.PrintIntrinsics();
   return true;
 }
 
@@ -210,134 +372,198 @@ void PointCloudToImage::Pointcloud2SemanticImage(
   }
 }
 
-void PointCloudToImage::PointCloudCallback(
-    const sensor_msgs::PointCloud2::ConstPtr &msg) {
-  TicToc tt;
-  auto frame_id = msg->header.frame_id;
-  auto stamp = msg->header.stamp;
-
-  pcl::PointCloud<PointType>::Ptr cloud_ptr;
-  cloud_ptr.reset(new pcl::PointCloud<PointType>());
-  if (DATASET_TYPE.find("FusionPortable") != std::string::npos) {
-    pcl::fromROSMsg(*msg, *cloud_ptr);
-  } else if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
-             (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
-    pcl::PointCloud<pcl::PointXYZIRGBL> tmp_cloud;
-    pcl::fromROSMsg(*msg, tmp_cloud);
-    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
-      PointType pt;
-      pt.x = tmp_cloud.points[i].x;
-      pt.y = tmp_cloud.points[i].y;
-      pt.z = tmp_cloud.points[i].z;
-      pt.intensity = tmp_cloud.points[i].intensity;
-      pt.reflectivity = tmp_cloud.points[i].label;
-      cloud_ptr->points.push_back(pt);
-    }
-  } else if (DATASET_TYPE.find("KITTI360") != std::string::npos) {
-    pcl::PointCloud<pcl::PointXYZ> tmp_cloud;
-    pcl::fromROSMsg(*msg, tmp_cloud);
-    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
-      PointType pt;
-      pt.x = tmp_cloud.points[i].x;
-      pt.y = tmp_cloud.points[i].y;
-      pt.z = tmp_cloud.points[i].z;
-      cloud_ptr->points.push_back(pt);
-    }
-  } else if (DATASET_TYPE.find("KITTI") != std::string::npos) {
-    pcl::PointCloud<pcl::PointXYZI> tmp_cloud;
-    pcl::fromROSMsg(*msg, tmp_cloud);
-    for (size_t i = 0; i < tmp_cloud.size(); ++i) {
-      PointType pt;
-      pt.x = tmp_cloud.points[i].x;
-      pt.y = tmp_cloud.points[i].y;
-      pt.z = tmp_cloud.points[i].z;
-      pt.intensity = tmp_cloud.points[i].intensity;
-      cloud_ptr->points.push_back(pt);
-    }
-  }
-#ifdef DEBUG
-  std::cout << "Pointcloud received: got " << cloud_ptr->size() << " points"
-            << std::endl;
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
+/////////////////////////////////////////////////
+// NOTE(gogojjh): Only work for SemanticFusionPortable data
+void PointCloudToImage::ProcessPointCloudImageAlignment(
+    const sensor_msgs::ImageConstPtr &msg) {
+  mutex_cloud_.lock();
+  // TODO(gogojjh): improve the code logistics here
+  // Remove elements from the queue if their timestamps are too old < 0.1s
+  while (!cloud_queue_.empty() &&
+         std::get<0>(cloud_queue_.front()).stamp.toSec() <
+             msg->header.stamp.toSec() - MIN_T_DATA) {
+#ifdef DEBUG_ALIGNMENT
+    std::cout << "Remove cloud from the queue: "
+              << std::get<0>(cloud_queue_.front()).stamp << " "
+              << abs(std::get<0>(cloud_queue_.front()).stamp.toSec() -
+                     msg->header.stamp.toSec())
+              << std::endl;
 #endif
+    cloud_queue_.pop();
+  }
 
-  // NOTE(gogojjh): functions to convert pointcloud into image
-  pcl::PointCloud<PointType>::Ptr cloud_filter_ptr;
-  cloud_filter_ptr.reset(new pcl::PointCloud<PointType>());
-  if (!computeLidarIntrinsics(cloud_ptr, cloud_filter_ptr, lidar_intrinsics_))
+  // NOTE(gogojjh): no nearest lidar data
+  if (cloud_queue_.empty()) {
+    mutex_cloud_.unlock();
     return;
-#ifdef DEBUG
-  std::cout << "Raw cloud size: " << cloud_ptr->size() << std::endl;
-  std::cout << "Filter cloud size: " << cloud_filter_ptr->size() << std::endl;
-#endif
-
-  cv::Mat depth_img(lidar_intrinsics_.num_elevation_divisions_,
-                    lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
-                    cv::Scalar(0));
-  Pointcloud2DepthImage(cloud_filter_ptr, lidar_intrinsics_, depth_img);
-#ifdef DEBUG
-  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
-#endif
-
-  cv::Mat height_img(lidar_intrinsics_.num_elevation_divisions_,
-                     lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
-                     cv::Scalar(0));
-  Pointcloud2HeightImage(cloud_filter_ptr, lidar_intrinsics_, height_img);
-#ifdef DEBUG
-  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
-#endif
-
-  cv::Mat semantic_img;
-  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
-      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
-    semantic_img = cv::Mat(lidar_intrinsics_.num_elevation_divisions_,
-                           lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
-                           cv::Scalar(0));
-    Pointcloud2SemanticImage(cloud_filter_ptr, lidar_intrinsics_, semantic_img);
-#ifdef DEBUG
-    cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
-#endif
   }
 
-  // ******************* Publish ROS message
-  sensor_msgs::CameraInfoPtr lidar_info_msg_ptr(new sensor_msgs::CameraInfo());
-  lidar_info_msg_ptr->header.frame_id = frame_id;
-  lidar_info_msg_ptr->header.stamp = stamp;
-  lidar_info_msg_ptr->height = lidar_intrinsics_.num_elevation_divisions_;
-  lidar_info_msg_ptr->width = lidar_intrinsics_.num_azimuth_divisions_;
-  lidar_info_msg_ptr->distortion_model = lidar_intrinsics_.distortion_model_;
-  lidar_info_msg_ptr->D = {
-      static_cast<float>(lidar_intrinsics_.num_azimuth_divisions_),
-      static_cast<float>(lidar_intrinsics_.num_elevation_divisions_),
-      lidar_intrinsics_.horizontal_fov_,
-      lidar_intrinsics_.vertical_fov_,
-      lidar_intrinsics_.start_azimuth_rad_,
-      lidar_intrinsics_.end_azimuth_rad_,
-      lidar_intrinsics_.start_elevation_rad_,
-      lidar_intrinsics_.end_elevation_rad_};
+  double t_msg = msg->header.stamp.toSec();
 
-  sensor_msgs::ImagePtr depth_img_msg_ptr =
-      cv_bridge::CvImage(std_msgs::Header(), "mono16", depth_img).toImageMsg();
-  depth_img_msg_ptr->header.frame_id = frame_id;
-  depth_img_msg_ptr->header.stamp = stamp;
-  depth_pub_.publish(depth_img_msg_ptr, lidar_info_msg_ptr);
+  bool select_t1 = false;
+  bool select_t2 = false;
+  const auto &data_tuple_1 = cloud_queue_.front();
+  double t1 = std::get<0>(data_tuple_1).stamp.toSec();
+  cloud_queue_.pop();
 
-  sensor_msgs::ImagePtr height_img_msg_ptr =
-      cv_bridge::CvImage(std_msgs::Header(), "mono16", height_img).toImageMsg();
-  height_img_msg_ptr->header.frame_id = frame_id;
-  height_img_msg_ptr->header.stamp = stamp;
-  height_pub_.publish(height_img_msg_ptr, lidar_info_msg_ptr);
+  const auto &data_tuple_2 = cloud_queue_.front();
+  double t2 = std::get<0>(data_tuple_2).stamp.toSec();
 
-  if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
-      (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+  // Handle the case1:
+  // Image:       |
+  // Pointcloud:    |
+  if (cloud_queue_.size() == 1) {
+    if (abs(t1 - t_msg) < MIN_T_DATA) {
+      select_t1 = true;
+    }
+  }
+  // Handle the case:
+  // Image:        |
+  // Pointcloud: |    |
+  else {
+    if ((abs(t1 - t_msg) < MIN_T_DATA) && (abs(t1 - t_msg) < abs(t2 - t_msg))) {
+      select_t1 = true;
+    } else if ((abs(t2 - t_msg) < MIN_T_DATA) &&
+               (abs(t2 - t_msg) < abs(t1 - t_msg))) {
+      select_t2 = true;
+    }
+  }
+
+  if (select_t1 || select_t2) {
+    // Retrieve sensor data
+    std_msgs::Header header;
+    pcl::PointCloud<PointType>::Ptr cloud_ptr;
+    LidarIntrinsics lidar_intrinsics;
+
+    if (select_t1) {
+      std::tie(header, cloud_ptr, lidar_intrinsics) = data_tuple_1;
+    } else {
+      std::tie(header, cloud_ptr, lidar_intrinsics) = data_tuple_2;
+      cloud_queue_.pop();
+    }
+    mutex_cloud_.unlock();
+#ifdef DEBUG_ALIGNMENT
+    std::cout << "Accept cloud from the queue: " << header.stamp << " "
+              << abs(header.stamp.toSec() - t_msg) << std::endl;
+#endif
+
+#ifdef DEBUG_ALIGNMENT
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+      cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
+    } catch (cv_bridge::Exception &e) {
+      ROS_ERROR("cv_bridge exception: %s", e.what());
+      return;
+    }
+    cv::Mat image = cv_ptr->image;
+#else
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+      cv_ptr = cv_bridge::toCvCopy(msg, "mono16");
+    } catch (cv_bridge::Exception &e) {
+      ROS_ERROR("cv_bridge exception: %s", e.what());
+      return;
+    }
+    cv::Mat image = cv_ptr->image;
+#endif
+
+    // RetrieveTF
+    Eigen::Matrix4d T_cam_lidar;
+    tf::StampedTransform TF_cam_lidar;
+    std::string world_frame = msg->header.frame_id;
+    std::string source_frame = header.frame_id;
+    std::string *err_msg = new std::string();
+    if (!listener_.canTransform(world_frame, source_frame, msg->header.stamp,
+                                err_msg)) {
+#ifdef DEBUG_ALIGNMENT
+      std::cout << "No transform available: " << *err_msg << std::endl;
+#endif
+      delete err_msg;
+    } else {
+      listener_.lookupTransform(world_frame, source_frame, msg->header.stamp,
+                                TF_cam_lidar);
+      Eigen::Affine3d pose_cam_lidar;
+      tf::transformTFToEigen(TF_cam_lidar, pose_cam_lidar);
+      T_cam_lidar = pose_cam_lidar.matrix();
+#ifdef DEBUG_ALIGNMENT
+      std::cout << "T_cam_lidar: " << std::endl << T_cam_lidar << std::endl;
+#endif
+    }
+
+    // Pointcloud image alignment
+#ifdef DEBUG_ALIGNMENT
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_label(
+        new pcl::PointCloud<pcl::PointXYZRGB>);
+    cv::Vec3b color;
+    for (size_t i = 0; i < cloud_ptr->points.size(); i++) {
+      pcl::PointXYZRGB p;
+      p.x = cloud_ptr->points[i].x;
+      p.y = cloud_ptr->points[i].y;
+      p.z = cloud_ptr->points[i].z;
+
+      Eigen::Vector3d pt(p.x, p.y, p.z);
+      Eigen::Vector3d pt_cam =
+          T_cam_lidar.block<3, 3>(0, 0) * pt + T_cam_lidar.block<3, 1>(0, 3);
+      Eigen::Vector3d pt_pixel = K_ * pt_cam;
+      Eigen::Vector2d uv(pt_pixel[0] / pt_pixel[2], pt_pixel[1] / pt_pixel[2]);
+      if ((pt_cam.z() <= 0.0) || (uv[0] < 0 || uv[0] >= image.cols ||
+                                  uv[1] < 0 || uv[1] >= image.rows)) {
+        continue;
+      }
+      color = image.at<cv::Vec3b>(uv[1], uv[0]);
+      p.r = color[2];
+      p.g = color[1];
+      p.b = color[0];
+      cloud_label->push_back(p);
+    }
+#else
+    pcl::PointCloud<PointType>::Ptr cloud_label(new pcl::PointCloud<PointType>);
+    cloud_label->reserve(cloud_ptr->size() / 2);
+    for (size_t i = 0; i < cloud_ptr->points.size(); i++) {
+      PointType p;
+      p.x = cloud_ptr->points[i].x;
+      p.y = cloud_ptr->points[i].y;
+      p.z = cloud_ptr->points[i].z;
+      Eigen::Vector3d pt(p.x, p.y, p.z);
+      Eigen::Vector3d pt_cam =
+          T_cam_lidar.block<3, 3>(0, 0) * pt + T_cam_lidar.block<3, 1>(0, 3);
+      Eigen::Vector3d pt_pixel = K_ * pt_cam;
+      Eigen::Vector2d uv(pt_pixel[0] / pt_pixel[2], pt_pixel[1] / pt_pixel[2]);
+      if ((pt_cam.z() <= 0.0) || (uv[0] < 0 || uv[0] >= image.cols ||
+                                  uv[1] < 0 || uv[1] >= image.rows)) {
+        continue;
+      }
+      p.reflectivity = image.at<uint16_t>(uv[1], uv[0]);  // get the label
+      cloud_label->push_back(p);
+    }
+#endif
+
+#ifdef DEBUG_ALIGNMENT
+    if (!cloud_label->empty()) {
+      // DEBUG(gogojjh):
+      pcl::PCDWriter writer;
+      writer.write("/Spy/dataset/tmp/cloud_label.pcd", *cloud_label);
+      std::cout << "Save cloud_label: " << cloud_label->size() << std::endl;
+    }
+#else
+    cv::Mat semantic_img = cv::Mat(lidar_intrinsics.num_elevation_divisions_,
+                                   lidar_intrinsics.num_azimuth_divisions_,
+                                   CV_16UC1, cv::Scalar(0));
+    Pointcloud2SemanticImage(cloud_label, lidar_intrinsics, semantic_img);
+
+    sensor_msgs::CameraInfoPtr lidar_info_msg_ptr(
+        new sensor_msgs::CameraInfo());
+    lidar_info_msg_ptr->header = header;
+    lidar_intrinsics.ConvertToMsg(lidar_info_msg_ptr);
+
     sensor_msgs::ImagePtr semantic_img_msg_ptr =
-        cv_bridge::CvImage(std_msgs::Header(), "mono16", semantic_img)
-            .toImageMsg();
-    semantic_img_msg_ptr->header.frame_id = frame_id;
-    semantic_img_msg_ptr->header.stamp = stamp;
+        cv_bridge::CvImage(header, "mono16", semantic_img).toImageMsg();
     semantic_pub_.publish(semantic_img_msg_ptr, lidar_info_msg_ptr);
+#endif
+  } else {
+    mutex_cloud_.unlock();
   }
-
-  // output time: 3-5ms
-  std::cout << "PointCloud to Image costs: " << tt.toc() << "ms" << std::endl;
-}
+}  // namespace pc_img_conv
 }  // namespace pc_img_conv
