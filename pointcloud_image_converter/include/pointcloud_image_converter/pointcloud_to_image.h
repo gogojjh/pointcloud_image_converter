@@ -104,10 +104,10 @@ class PointCloudToImage {
   tf::TransformListener listener_;
 
   // ROS Publisher
-  image_transport::CameraPublisher depth_pub_;
-  image_transport::CameraPublisher height_pub_;
-  image_transport::CameraPublisher semantic_pub_;
-  std::shared_ptr<image_transport::ImageTransport> it_ptr_;
+  ros::Publisher depth_pub_;
+  ros::Publisher height_pub_;
+  ros::Publisher semantic_pub_;
+  ros::Publisher lidar_info_pub_;
 
   std::queue<std::tuple<std_msgs::Header, pcl::PointCloud<PointType>::Ptr,
                         LidarIntrinsics>>

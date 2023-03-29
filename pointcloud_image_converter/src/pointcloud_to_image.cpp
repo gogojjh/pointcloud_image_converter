@@ -53,10 +53,11 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
   // ROS subscriber and publisher
   pointcloud_sub_ = nh_.subscribe("input_cloud", 1,
                                   &PointCloudToImage::PointCloudCallback, this);
-  it_ptr_.reset(new image_transport::ImageTransport(nh_));
-  depth_pub_ = it_ptr_->advertiseCamera("depth_image", 1);
-  height_pub_ = it_ptr_->advertiseCamera("height_image", 1);
-  semantic_pub_ = it_ptr_->advertiseCamera("semantic_image", 1);
+  depth_pub_ = nh.advertise<sensor_msgs::Image>("depth_image", 1);
+  height_pub_ = nh.advertise<sensor_msgs::Image>("height_image", 1);
+  semantic_pub_ = nh.advertise<sensor_msgs::Image>("semantic_image", 1);
+  lidar_info_pub_ =
+      nh.advertise<sensor_msgs::CameraInfo>("lidar_camera_info", 1);
 
   if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
     image_sub_ = nh_.subscribe("input_camera_semantic_image", 1,
@@ -162,17 +163,19 @@ void PointCloudToImage::PointCloudCallback(
 
   sensor_msgs::ImagePtr depth_img_msg_ptr =
       cv_bridge::CvImage(msg->header, "mono16", depth_img).toImageMsg();
-  depth_pub_.publish(depth_img_msg_ptr, lidar_info_msg_ptr);
+  depth_pub_.publish(*depth_img_msg_ptr);
 
   sensor_msgs::ImagePtr height_img_msg_ptr =
       cv_bridge::CvImage(msg->header, "mono16", height_img).toImageMsg();
-  height_pub_.publish(height_img_msg_ptr, lidar_info_msg_ptr);
+  height_pub_.publish(*height_img_msg_ptr);
+
+  lidar_info_pub_.publish(*lidar_info_msg_ptr);
 
   if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
       (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
     sensor_msgs::ImagePtr semantic_img_msg_ptr =
         cv_bridge::CvImage(msg->header, "mono16", semantic_img).toImageMsg();
-    semantic_pub_.publish(semantic_img_msg_ptr, lidar_info_msg_ptr);
+    semantic_pub_.publish(semantic_img_msg_ptr);
   }
 
   // output time: 3-10ms
@@ -560,7 +563,7 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
 
     sensor_msgs::ImagePtr semantic_img_msg_ptr =
         cv_bridge::CvImage(header, "mono16", semantic_img).toImageMsg();
-    semantic_pub_.publish(semantic_img_msg_ptr, lidar_info_msg_ptr);
+    semantic_pub_.publish(semantic_img_msg_ptr);
 #endif
   } else {
     mutex_cloud_.unlock();
