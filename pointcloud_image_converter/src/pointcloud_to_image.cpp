@@ -26,6 +26,9 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
 
   MIN_T_DATA = get_ros_param(nh, "min_t_data", 0.1);
   CLOUD_BUFF = get_ros_param(nh, "cloud_buff", 50);
+  N_CAM = get_ros_param(nh, "n_cam", 1);
+  K_.resize(N_CAM);
+  v_image_queue_.resize(N_CAM);
 
   // Parameters: lidar intrinsics
   lidar_intrinsics_.distortion_model_ =
@@ -60,12 +63,27 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
       nh.advertise<sensor_msgs::CameraInfo>("lidar_camera_info", 1);
 
   if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
-    image_sub_ = nh_.subscribe("input_camera_semantic_image", 1,
-                               &PointCloudToImage::ImageCallback, this);
-    camera_info_sub_ = nh_.subscribe(
-        "camera_info", 1, &PointCloudToImage::CameraInfoCallback, this);
+    std::stringstream ss;
+    for (int i = 0; i < N_CAM; i++) {
+      ss << "input_semantic_image_frame_cam" << std::setw(2)
+         << std::setfill('0') << i;
+      if (i == 0) {
+        v_image_sub_.push_back(nh_.subscribe(
+            ss.str(), 1, &PointCloudToImage::ImageCallback_FrameCam00, this));
+      } else {
+        v_image_sub_.push_back(nh_.subscribe(
+            ss.str(), 1, &PointCloudToImage::ImageCallback_FrameCam01, this));
+      }
+
+      ss.str("");
+
+      ss << "input_camera_info_frame_cam" << std::setw(2) << std::setfill('0')
+         << i;
+      v_camera_info_sub_.push_back(nh_.subscribe(
+          ss.str(), 1, &PointCloudToImage::CameraInfoCallback, this));
+      K_[i].setIdentity();
+    }
   }
-  K_.setIdentity();
 }
 
 void PointCloudToImage::PointCloudCallback(
@@ -118,6 +136,7 @@ void PointCloudToImage::PointCloudCallback(
             << std::endl;
 #endif
 
+  // TODO(gogojjh): improve the efficiency to avoid repeated computation
   // NOTE(gogojjh): functions to convert pointcloud into image
   pcl::PointCloud<PointType>::Ptr cloud_filter_ptr;
   cloud_filter_ptr.reset(new pcl::PointCloud<PointType>());
@@ -131,30 +150,55 @@ void PointCloudToImage::PointCloudCallback(
   cv::Mat depth_img(lidar_intrinsics_.num_elevation_divisions_,
                     lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
                     cv::Scalar(0));
-  Pointcloud2DepthImage(cloud_filter_ptr, lidar_intrinsics_, depth_img);
-#ifdef DEBUG
-  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
-#endif
-
   cv::Mat height_img(lidar_intrinsics_.num_elevation_divisions_,
                      lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
                      cv::Scalar(0));
-  Pointcloud2HeightImage(cloud_filter_ptr, lidar_intrinsics_, height_img);
-#ifdef DEBUG
-  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
-#endif
-
   cv::Mat semantic_img;
   if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
       (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
     semantic_img = cv::Mat(lidar_intrinsics_.num_elevation_divisions_,
                            lidar_intrinsics_.num_azimuth_divisions_, CV_16UC1,
                            cv::Scalar(0));
-    Pointcloud2SemanticImage(cloud_filter_ptr, lidar_intrinsics_, semantic_img);
-#ifdef DEBUG
-    cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
-#endif
   }
+
+  float r, elevation_angle_rad, azimuth_angle_rad;
+  int row_id, col_id;
+  for (const auto &pt : *cloud_filter_ptr) {
+    r = sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
+    elevation_angle_rad = acos(pt.z / r);
+    azimuth_angle_rad = M_PI - atan2(pt.y, pt.x);
+    row_id =
+        round((elevation_angle_rad - lidar_intrinsics_.start_elevation_rad_) /
+              lidar_intrinsics_.rads_per_pixel_elevation_);
+    if (row_id < 0 || row_id > lidar_intrinsics_.num_elevation_divisions_ - 1)
+      continue;
+    col_id =
+        round(azimuth_angle_rad / lidar_intrinsics_.rads_per_pixel_azimuth_);
+    if (col_id >= lidar_intrinsics_.num_azimuth_divisions_)
+      col_id -= lidar_intrinsics_.num_azimuth_divisions_;
+
+    ////////// DepthImage
+    // The largest depth <= 2^16/1e3 = 65.536
+    float dep = r * PC2IMG_SCALE_FACTOR;
+    if (dep > std::numeric_limits<uint16_t>::max()) continue;
+    if (dep < 0.0f) continue;
+    depth_img.at<uint16_t>(row_id, col_id) = uint16_t(dep);
+    ////////// HeightImage
+    float z = (pt.z + PC2IMG_SCALE_OFFSET) * PC2IMG_SCALE_FACTOR;
+    if (z > std::numeric_limits<uint16_t>::max()) continue;
+    if (z < 0.0f) continue;
+    height_img.at<uint16_t>(row_id, col_id) = uint16_t(z);
+    ////////// SemanticImage
+    if ((DATASET_TYPE.find("SemanticKITTI") != std::string::npos) ||
+        (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
+      semantic_img.at<uint16_t>(row_id, col_id) = pt.reflectivity;  // label
+    }
+  }
+#ifdef DEBUG
+  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
+  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
+  cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
+#endif
 
   // ******************* Publish ROS message
   sensor_msgs::CameraInfoPtr lidar_info_msg_ptr(new sensor_msgs::CameraInfo());
@@ -178,29 +222,42 @@ void PointCloudToImage::PointCloudCallback(
     semantic_pub_.publish(semantic_img_msg_ptr);
   }
 
+#ifdef DEBUG
   // output time: 3-10ms
   std::cout << "PointCloud to Image costs: " << tt.toc() << "ms" << std::endl;
+#endif
 
   // NOTE(gogojjh): Only work for SemanticFusionPortable data
   if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
     mutex_cloud_.lock();
-    cloud_queue_.push(
-        std::make_tuple(msg->header, cloud_ptr, lidar_intrinsics_));
+    cloud_queue_.emplace(msg->header, cloud_ptr, lidar_intrinsics_);
     while (!cloud_queue_.empty() && cloud_queue_.size() > CLOUD_BUFF) {
       cloud_queue_.pop();
     }
     mutex_cloud_.unlock();
   }
-}
+}  // namespace pc_img_conv
 
 // clang-format off
 // NOTE(gogojjh): Only work for SemanticFusionPortable data
-void PointCloudToImage::ImageCallback(const sensor_msgs::ImageConstPtr &msg) {
-  if (K_(0, 0) == 1.0f || K_(1, 1) == 1.0f) return;
-  // output time: 3-10ms
+void PointCloudToImage::ImageCallback_FrameCam00(const sensor_msgs::ImageConstPtr &msg) {
+  if (K_.size() < 1) return;
+  if ((K_[0](0, 0) == 1.0f || K_[0](1, 1) == 1.0f)) return;
   TicToc tt;
-  ProcessPointCloudImageAlignment(msg);
-  std::cout << "PointCloud to Image Alignment costs: " << tt.toc() << "ms" << std::endl;
+  ProcessPointCloudImageAlignment(msg, K_[0]);
+#ifdef DEBUG_ALIGNMENT
+  std::cout << "PointCloud to Image Alignment costs: " << tt.toc() << "ms" << std::endl; // output time: 3-10ms
+#endif
+}
+
+void PointCloudToImage::ImageCallback_FrameCam01(const sensor_msgs::ImageConstPtr &msg) {
+  if (K_.size() < 2) return;
+  if ((K_[1](0, 0) == 1.0f || K_[1](1, 1) == 1.0f)) return;
+  TicToc tt;
+  ProcessPointCloudImageAlignment(msg, K_[1]);
+#ifdef DEBUG_ALIGNMENT
+  std::cout << "PointCloud to Image Alignment costs: " << tt.toc() << "ms" << std::endl; // output time: 3-10ms
+#endif
 }
 // clang-format on
 
@@ -208,10 +265,20 @@ void PointCloudToImage::ImageCallback(const sensor_msgs::ImageConstPtr &msg) {
 // NOTE(gogojjh): Only work for SemanticFusionPortable data
 void PointCloudToImage::CameraInfoCallback(
     const sensor_msgs::CameraInfoConstPtr &msg) {
-  if (K_(0, 0) == 1.0f || K_(1, 1) == 1.0f) {
-    K_ << msg->K[0], msg->K[1], msg->K[2], 
-          msg->K[3], msg->K[4], msg->K[5], 
-          msg->K[6], msg->K[7], msg->K[8];
+  if ((msg->header.frame_id.compare("frame_cam00") == 0) && (K_.size() >= 1)) {
+    if (K_[0](0, 0) == 1.0f || K_[0](1, 1) == 1.0f) {
+      K_[0] << msg->K[0], msg->K[1], msg->K[2], 
+               msg->K[3], msg->K[4], msg->K[5], 
+               msg->K[6], msg->K[7], msg->K[8];
+    }
+  } else if ((msg->header.frame_id.compare("frame_cam01") == 0) && (K_.size() >= 2)) {
+    if (K_[1](0, 0) == 1.0f || K_[1](1, 1) == 1.0f) {
+      K_[1] << msg->K[0], msg->K[1], msg->K[2], 
+               msg->K[3], msg->K[4], msg->K[5], 
+               msg->K[6], msg->K[7], msg->K[8];
+    }
+  } else {
+    return;
   }
 }
 // clang-format on
@@ -246,9 +313,12 @@ bool PointCloudToImage::computeLidarIntrinsics(
       int cnt_start = 0;
       int cnt_end = 0;
       for (const auto &pt : *cloud_ptr) {
-        float r = sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
+        if (!std::isfinite(pt.x) || !std::isfinite(pt.y) ||
+            !std::isfinite(pt.z))
+          continue;
         // NOTE(gogojjh): Filter out points that are too close
         // Otherwise it will produce some NaN values
+        float r = sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
         if (r < SCAN_MIN_RANGE || r > SCAN_MAX_RANGE) continue;
         cloud_filter->push_back(pt);
 
@@ -280,9 +350,12 @@ bool PointCloudToImage::computeLidarIntrinsics(
     intr.end_elevation_rad_ = 0.0f;
     int cnt_start = 0, cnt_end = 0;
     for (const auto &pt : *cloud_ptr) {
+      if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z))
+        continue;
       float r = sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
       if (r < SCAN_MIN_RANGE || r > SCAN_MAX_RANGE) continue;
       cloud_filter->push_back(pt);
+
       float elevation_angle_rad = acos(pt.z / r);
       intr.start_elevation_rad_ =
           intr.start_elevation_rad_ < elevation_angle_rad
@@ -299,7 +372,9 @@ bool PointCloudToImage::computeLidarIntrinsics(
         intr.horizontal_fov_ / (intr.num_azimuth_divisions_ - 1);
     intr.vertical_fov_ = intr.end_elevation_rad_ - intr.start_elevation_rad_;
   }
-  // intr.PrintIntrinsics();
+#ifdef DEBUG
+  intr.PrintIntrinsics();
+#endif
   return true;
 }
 
@@ -319,6 +394,7 @@ void PointCloudToImage::Pointcloud2DepthImage(
     int col_id = std::round(azimuth_angle_rad / intr.rads_per_pixel_azimuth_);
     if (col_id >= intr.num_azimuth_divisions_)
       col_id -= intr.num_azimuth_divisions_;
+
     float dep = r * PC2IMG_SCALE_FACTOR;
     // the largest depth <= 2^16/1e3 = 65.536
     if (dep > std::numeric_limits<uint16_t>::max()) {
@@ -380,7 +456,7 @@ void PointCloudToImage::Pointcloud2SemanticImage(
 /////////////////////////////////////////////////
 // NOTE(gogojjh): Only work for SemanticFusionPortable data
 void PointCloudToImage::ProcessPointCloudImageAlignment(
-    const sensor_msgs::ImageConstPtr &msg) {
+    const sensor_msgs::ImageConstPtr &msg, const Eigen::Matrix3d &K) {
   mutex_cloud_.lock();
   // TODO(gogojjh): improve the code logistics here
   // Remove elements from the queue if their timestamps are too old < 0.1s
@@ -407,11 +483,11 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
 
   bool select_t1 = false;
   bool select_t2 = false;
-  const auto &data_tuple_1 = cloud_queue_.front();
+  const auto data_tuple_1 = cloud_queue_.front();
   double t1 = std::get<0>(data_tuple_1).stamp.toSec();
   cloud_queue_.pop();
 
-  const auto &data_tuple_2 = cloud_queue_.front();
+  const auto data_tuple_2 = cloud_queue_.front();
   double t2 = std::get<0>(data_tuple_2).stamp.toSec();
 
   // Handle the case1:
@@ -499,9 +575,10 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
 #ifdef DEBUG_ALIGNMENT
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_label(
         new pcl::PointCloud<pcl::PointXYZRGB>);
+    cloud_label->reserve(cloud_ptr->size() / 2);
     cv::Vec3b color;
+    pcl::PointXYZRGB p;
     for (size_t i = 0; i < cloud_ptr->points.size(); i++) {
-      pcl::PointXYZRGB p;
       p.x = cloud_ptr->points[i].x;
       p.y = cloud_ptr->points[i].y;
       p.z = cloud_ptr->points[i].z;
@@ -509,7 +586,7 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
       Eigen::Vector3d pt(p.x, p.y, p.z);
       Eigen::Vector3d pt_cam =
           T_cam_lidar.block<3, 3>(0, 0) * pt + T_cam_lidar.block<3, 1>(0, 3);
-      Eigen::Vector3d pt_pixel = K_ * pt_cam;
+      Eigen::Vector3d pt_pixel = K * pt_cam;
       Eigen::Vector2d uv(pt_pixel[0] / pt_pixel[2], pt_pixel[1] / pt_pixel[2]);
       if ((pt_cam.z() <= 0.0) || (uv[0] < 0 || uv[0] >= image.cols ||
                                   uv[1] < 0 || uv[1] >= image.rows)) {
@@ -524,33 +601,26 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
 #else
     pcl::PointCloud<PointType>::Ptr cloud_label(new pcl::PointCloud<PointType>);
     cloud_label->reserve(cloud_ptr->size() / 2);
+    PointType p;
     for (size_t i = 0; i < cloud_ptr->points.size(); i++) {
-      PointType p;
       p.x = cloud_ptr->points[i].x;
       p.y = cloud_ptr->points[i].y;
       p.z = cloud_ptr->points[i].z;
       Eigen::Vector3d pt(p.x, p.y, p.z);
       Eigen::Vector3d pt_cam =
           T_cam_lidar.block<3, 3>(0, 0) * pt + T_cam_lidar.block<3, 1>(0, 3);
-      Eigen::Vector3d pt_pixel = K_ * pt_cam;
+      Eigen::Vector3d pt_pixel = K * pt_cam;
       Eigen::Vector2d uv(pt_pixel[0] / pt_pixel[2], pt_pixel[1] / pt_pixel[2]);
+      // Remove points that are not observed by the camera
       if ((pt_cam.z() <= 0.0) || (uv[0] < 0 || uv[0] >= image.cols ||
                                   uv[1] < 0 || uv[1] >= image.rows)) {
         continue;
       }
-      p.reflectivity = image.at<uint16_t>(uv[1], uv[0]);  // get the label
+      p.reflectivity = image.at<std::uint16_t>(uv[1], uv[0]);  // get the
       cloud_label->push_back(p);
     }
 #endif
 
-#ifdef DEBUG_ALIGNMENT
-    if (!cloud_label->empty()) {
-      // DEBUG(gogojjh):
-      pcl::PCDWriter writer;
-      writer.write("/Spy/dataset/tmp/cloud_label.pcd", *cloud_label);
-      std::cout << "Save cloud_label: " << cloud_label->size() << std::endl;
-    }
-#else
     cv::Mat semantic_img = cv::Mat(lidar_intrinsics.num_elevation_divisions_,
                                    lidar_intrinsics.num_azimuth_divisions_,
                                    CV_16UC1, cv::Scalar(0));
@@ -564,7 +634,6 @@ void PointCloudToImage::ProcessPointCloudImageAlignment(
     sensor_msgs::ImagePtr semantic_img_msg_ptr =
         cv_bridge::CvImage(header, "mono16", semantic_img).toImageMsg();
     semantic_pub_.publish(semantic_img_msg_ptr);
-#endif
   } else {
     mutex_cloud_.unlock();
   }

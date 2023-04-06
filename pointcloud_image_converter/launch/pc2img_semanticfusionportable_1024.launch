@@ -4,10 +4,10 @@
 		file="$(find pointcloud_image_converter)/config/pc2img_semanticfusionportable_1024.yaml" />
 
 	<node pkg="pointcloud_image_converter" name="pc2img_node" type="pc2img_node" 
-		ns="pc2img" clear_params="true" required="true" >
+		respawn="true" ns="pc2img" clear_params="true" required="false" output="screen" >
 		<remap from="input_cloud" to="/r3live/cloud_nonregistered_raw" />
-		<remap from="input_camera_semantic_image" to="/stereo/frame_left/semantic_image" />
-		<remap from="camera_info" to="/stereo/frame_left/camera_info" />
+		<remap from="input_semantic_image_frame_cam00" to="/stereo/frame_left/semantic_image" />
+		<remap from="input_camera_info_frame_cam00" to="/stereo/frame_left/camera_info" />
 	</node>
 
 </launch >

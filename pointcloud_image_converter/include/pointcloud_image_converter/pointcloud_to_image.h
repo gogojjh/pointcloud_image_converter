@@ -75,6 +75,10 @@ class PointCloudToImage {
 
   void ImageCallback(const sensor_msgs::Image::ConstPtr &msg);
 
+  void ImageCallback_FrameCam00(const sensor_msgs::Image::ConstPtr &msg);
+
+  void ImageCallback_FrameCam01(const sensor_msgs::Image::ConstPtr &msg);
+
   void CameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr &msg);
 
   bool computeLidarIntrinsics(const pcl::PointCloud<PointType>::Ptr &cloud,
@@ -91,7 +95,8 @@ class PointCloudToImage {
       const pcl::PointCloud<PointType>::Ptr &cloud_ptr,
       const LidarIntrinsics &intr, cv::Mat &img);
 
-  void ProcessPointCloudImageAlignment(const sensor_msgs::ImageConstPtr &msg);
+  void ProcessPointCloudImageAlignment(const sensor_msgs::ImageConstPtr &msg,
+                                       const Eigen::Matrix3d &K);
 
  private:
   ros::NodeHandle nh_;
@@ -99,8 +104,8 @@ class PointCloudToImage {
 
   // ROS Subscriber
   ros::Subscriber pointcloud_sub_;
-  ros::Subscriber image_sub_;
-  ros::Subscriber camera_info_sub_;
+  std::vector<ros::Subscriber> v_image_sub_;
+  std::vector<ros::Subscriber> v_camera_info_sub_;
   tf::TransformListener listener_;
 
   // ROS Publisher
@@ -112,10 +117,13 @@ class PointCloudToImage {
   std::queue<std::tuple<std_msgs::Header, pcl::PointCloud<PointType>::Ptr,
                         LidarIntrinsics>>
       cloud_queue_;
+  std::vector<
+      std::queue<std::tuple<std_msgs::Header, sensor_msgs::ImageConstPtr>>>
+      v_image_queue_;
 
   // Parameters
   LidarIntrinsics lidar_intrinsics_;
-  Eigen::Matrix3d K_;
+  std::vector<Eigen::Matrix3d> K_;
 
   float PC2IMG_SCALE_FACTOR;
   float PC2IMG_SCALE_OFFSET;
@@ -127,6 +135,7 @@ class PointCloudToImage {
   float MIN_T_DATA;
 
   int CLOUD_BUFF;
+  int N_CAM;
 
   // Other
   std::mutex mutex_cloud_;

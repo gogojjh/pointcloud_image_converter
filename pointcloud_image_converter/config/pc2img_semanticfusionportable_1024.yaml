@@ -13,3 +13,4 @@ pc2img:
   end_azimuth_rad: 6.2831853
   cloud_buff: 100  # change depending on the frequency of semantic segmentation
   min_t_data: 0.1
+  n_cam: 1
