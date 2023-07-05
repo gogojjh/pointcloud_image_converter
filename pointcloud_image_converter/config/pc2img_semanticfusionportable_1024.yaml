@@ -1,8 +1,8 @@
 pc2img:
   pc2img_scale_factor: 1000.0 # do not change, default parameters for nvblox
   pc2img_scale_offset: 10.0   # do not change, default parameters for nvblox
+  scan_max_range: 70.0
   scan_min_range: 2.0
-  scan_max_range: 200.0
   dataset_type: SemanticFusionPortable
   distortion_model: lidar_ouster
   num_elevation_divisions: 128

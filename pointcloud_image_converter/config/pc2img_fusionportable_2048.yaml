@@ -6,7 +6,7 @@ pc2img:
   dataset_type: FusionPortable
   distortion_model: lidar_ouster
   num_elevation_divisions: 128
-  num_azimuth_divisions: 512
+  num_azimuth_divisions: 2048
   start_elevation_rad: 65.0
   end_elevation_rad: 115.0
   start_azimuth_rad: 0.0

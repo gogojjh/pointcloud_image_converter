@@ -62,6 +62,7 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
   lidar_info_pub_ =
       nh.advertise<sensor_msgs::CameraInfo>("lidar_camera_info", 1);
 
+#ifdef DEBUG_ALIGNMENT
   if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
     std::stringstream ss;
     for (int i = 0; i < N_CAM; i++) {
@@ -74,9 +75,7 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
         v_image_sub_.push_back(nh_.subscribe(
             ss.str(), 1, &PointCloudToImage::ImageCallback_FrameCam01, this));
       }
-
       ss.str("");
-
       ss << "input_camera_info_frame_cam" << std::setw(2) << std::setfill('0')
          << i;
       v_camera_info_sub_.push_back(nh_.subscribe(
@@ -84,6 +83,7 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
       K_[i].setIdentity();
     }
   }
+#endif
 }
 
 void PointCloudToImage::PointCloudCallback(
@@ -100,12 +100,22 @@ void PointCloudToImage::PointCloudCallback(
     pcl::PointCloud<pcl::PointXYZIRGBL> tmp_cloud;
     pcl::fromROSMsg(*msg, tmp_cloud);
     for (size_t i = 0; i < tmp_cloud.size(); ++i) {
+      // NOTE(gogojjh): only for SemanticKITTI and SemanticUSL dataset
+      // Filter those outlier and dynamic objects
+      // label <= 1 means unlabeled or outlier
+      // label > 250 means moving (dynamic) objects
+      if (tmp_cloud.points[i].label <= 1) continue;
+      if (tmp_cloud.points[i].label > 250) continue;
+
+      // NOTE(gogojjh): only for SemanticUSL dataset
+      if (DATASET_TYPE.find("SemanticUSL") != std::string::npos) {
+        if (tmp_cloud.points[i].label == 10) continue;  // person
+        if (tmp_cloud.points[i].label == 30) continue;  // car
+      }
       PointType pt;
       pt.x = tmp_cloud.points[i].x;
       pt.y = tmp_cloud.points[i].y;
       pt.z = tmp_cloud.points[i].z;
-      // NOTE(gogojjh): the intensity information is not necessary
-      // pt.intensity = tmp_cloud.points[i].intensity;
       pt.reflectivity = tmp_cloud.points[i].label;
       cloud_ptr->points.push_back(pt);
     }
@@ -136,7 +146,6 @@ void PointCloudToImage::PointCloudCallback(
             << std::endl;
 #endif
 
-  // TODO(gogojjh): improve the efficiency to avoid repeated computation
   // NOTE(gogojjh): functions to convert pointcloud into image
   pcl::PointCloud<PointType>::Ptr cloud_filter_ptr;
   cloud_filter_ptr.reset(new pcl::PointCloud<PointType>());
@@ -455,6 +464,7 @@ void PointCloudToImage::Pointcloud2SemanticImage(
 /////////////////////////////////////////////////
 /////////////////////////////////////////////////
 // NOTE(gogojjh): Only work for SemanticFusionPortable data
+//                Not used, under development
 void PointCloudToImage::ProcessPointCloudImageAlignment(
     const sensor_msgs::ImageConstPtr &msg, const Eigen::Matrix3d &K) {
   mutex_cloud_.lock();

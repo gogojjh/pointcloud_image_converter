@@ -1,13 +1,13 @@
 pc2img:
   pc2img_scale_factor: 1000.0   # do not change, default parameters for nvblox
   pc2img_scale_offset: 10.0     # do not change, default parameters for nvblox
-  scan_max_range: 70.0
+  scan_max_range: 70.0          # do not change
   scan_min_range: 1.0
-  dataset_type: SemanticKITTI   # determine pointType
-  distortion_model: lidar_vlp # determine intrinsics
+  dataset_type: SemanticUSL     # determine pointType
+  distortion_model: lidar_vlp   # determine intrinsics
   num_elevation_divisions: 64
   num_azimuth_divisions: 1500
-  start_elevation_rad: 87.0
-  end_elevation_rad: 115.0
+  start_elevation_rad: 73.4   
+  end_elevation_rad: 106.6
   start_azimuth_rad: 0.0
   end_azimuth_rad: 6.2831853
