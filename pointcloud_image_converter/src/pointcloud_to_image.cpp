@@ -7,7 +7,7 @@
 #include "pointcloud_image_converter/TicToc.hpp"
 #include "pointcloud_image_converter/ros_params_helper.h"
 
-// #define DEBUG
+#define DEBUG
 // #define DEBUG_ALIGNMENT
 
 namespace pc_img_conv {
@@ -61,29 +61,6 @@ PointCloudToImage::PointCloudToImage(ros::NodeHandle &nh) : nh_(nh) {
   semantic_pub_ = nh.advertise<sensor_msgs::Image>("semantic_image", 1);
   lidar_info_pub_ =
       nh.advertise<sensor_msgs::CameraInfo>("lidar_camera_info", 1);
-
-#ifdef DEBUG_ALIGNMENT
-  if (DATASET_TYPE.find("SemanticFusionPortable") != std::string::npos) {
-    std::stringstream ss;
-    for (int i = 0; i < N_CAM; i++) {
-      ss << "input_semantic_image_frame_cam" << std::setw(2)
-         << std::setfill('0') << i;
-      if (i == 0) {
-        v_image_sub_.push_back(nh_.subscribe(
-            ss.str(), 1, &PointCloudToImage::ImageCallback_FrameCam00, this));
-      } else {
-        v_image_sub_.push_back(nh_.subscribe(
-            ss.str(), 1, &PointCloudToImage::ImageCallback_FrameCam01, this));
-      }
-      ss.str("");
-      ss << "input_camera_info_frame_cam" << std::setw(2) << std::setfill('0')
-         << i;
-      v_camera_info_sub_.push_back(nh_.subscribe(
-          ss.str(), 1, &PointCloudToImage::CameraInfoCallback, this));
-      K_[i].setIdentity();
-    }
-  }
-#endif
 }
 
 void PointCloudToImage::PointCloudCallback(
@@ -119,7 +96,8 @@ void PointCloudToImage::PointCloudCallback(
       pt.reflectivity = tmp_cloud.points[i].label;
       cloud_ptr->points.push_back(pt);
     }
-  } else if (DATASET_TYPE.find("KITTI360") != std::string::npos) {
+  } else if ((DATASET_TYPE.find("KITTI360") != std::string::npos) ||
+             (DATASET_TYPE.find("MaiCity") != std::string::npos)) {
     pcl::PointCloud<pcl::PointXYZ> tmp_cloud;
     pcl::fromROSMsg(*msg, tmp_cloud);
     for (size_t i = 0; i < tmp_cloud.size(); ++i) {
@@ -206,7 +184,8 @@ void PointCloudToImage::PointCloudCallback(
 #ifdef DEBUG
   cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
   cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
-  cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
+  if (!semantic_img.empty())
+    cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
 #endif
 
   // ******************* Publish ROS message
