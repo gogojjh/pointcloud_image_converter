@@ -7,7 +7,7 @@
 #include "pointcloud_image_converter/TicToc.hpp"
 #include "pointcloud_image_converter/ros_params_helper.h"
 
-#define DEBUG
+// #define DEBUG
 // #define DEBUG_ALIGNMENT
 
 namespace pc_img_conv {
@@ -150,6 +150,9 @@ void PointCloudToImage::PointCloudCallback(
 
   float r, elevation_angle_rad, azimuth_angle_rad;
   int row_id, col_id;
+#ifdef DEBUG
+  size_t cnt = 0;
+#endif
   for (const auto &pt : *cloud_filter_ptr) {
     r = sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
     elevation_angle_rad = acos(pt.z / r);
@@ -180,12 +183,18 @@ void PointCloudToImage::PointCloudCallback(
         (DATASET_TYPE.find("SemanticUSL") != std::string::npos)) {
       semantic_img.at<uint16_t>(row_id, col_id) = pt.reflectivity;  // label
     }
+#ifdef DEBUG
+    cnt++;
+#endif
   }
 #ifdef DEBUG
-  cv::imwrite("/Spy/dataset/tmp/depth_image.png", depth_img);
-  cv::imwrite("/Spy/dataset/tmp/height_image.png", height_img);
-  if (!semantic_img.empty())
-    cv::imwrite("/Spy/dataset/tmp/semantic_image.png", semantic_img);
+  std::cout << "Size of points on the image: " << cnt << std::endl;
+#endif
+#ifdef DEBUG
+  // cv::imwrite("/tmp/depth_image.png", depth_img);
+  // cv::imwrite("/tmp/height_image.png", height_img);
+  // if (!semantic_img.empty())
+  //   cv::imwrite("/tmp/semantic_image.png", semantic_img);
 #endif
 
   // ******************* Publish ROS message

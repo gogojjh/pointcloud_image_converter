@@ -4,7 +4,7 @@
 		file="$(find pointcloud_image_converter)/config/pc2img_maicity.yaml" />
 
 	<node pkg="pointcloud_image_converter" name="pc2img_node" type="pc2img_node" 
-		ns="pc2img" clear_params="true" required="true" output="screen">
+		ns="pc2img" clear_params="true" required="true" output="log">
 		<remap from="input_cloud" to="/velodyne_points" />
 	</node>
 
